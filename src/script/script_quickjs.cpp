@@ -2,7 +2,6 @@
 #include <map>
 #include <iostream>
 #include <quickjspp.hpp>
-#include <utility>
 #include <quickjs/quickjs-libc.h>
 
 #ifdef _WIN32
@@ -227,7 +226,7 @@ public:
     qjs_fetch_Headers headers;
     std::string cookies;
     std::string postdata;
-    explicit qjs_fetch_Request(std::string url) : url(std::move(url)) {}
+    explicit qjs_fetch_Request(const std::string &url) : url(url) {}
 };
 
 class qjs_fetch_Response
@@ -390,7 +389,7 @@ void script_runtime_init(qjs::Runtime &runtime)
     js_std_init_handlers(runtime.rt);
 }
 
-int ShowMsgbox(const std::string &title, const std::string &content, uint16_t type = 0)
+int ShowMsgbox(const std::string &title, std::string content, uint16_t type = 0)
 {
 #ifdef _WIN32
     if(!type)
@@ -425,7 +424,7 @@ struct Lambda {
 
 uint32_t currentTime()
 {
-    return time(nullptr);
+    return time(NULL);
 }
 
 int script_context_init(qjs::Context &context)
@@ -526,7 +525,7 @@ int script_context_init(qjs::Context &context)
         )", "<import>", JS_EVAL_TYPE_MODULE);
         return 0;
     }
-    catch(qjs::exception&)
+    catch(qjs::exception)
     {
         script_print_stack(context);
         return 1;

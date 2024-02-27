@@ -26,8 +26,7 @@ std::string getTime(int type)
         format = "%Y%m%d-%H%M%S";
         break;
     case 2:
-        format = "%Y/%m/%d %a %H:%M:%S.";
-        format += cMillis;
+        format = "%Y/%m/%d %a %H:%M:%S." + std::string(cMillis);
         break;
     case 3:
     default:
