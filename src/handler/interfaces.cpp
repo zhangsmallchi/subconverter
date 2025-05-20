@@ -3,7 +3,6 @@
 #include <mutex>
 #include <numeric>
 
-#include <inja.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include "config/binding.h"
@@ -11,7 +10,6 @@
 #include "generator/config/ruleconvert.h"
 #include "generator/config/subexport.h"
 #include "generator/template/templates.h"
-#include "script/cron.h"
 #include "script/script_quickjs.h"
 #include "server/webserver.h"
 #include "utils/base64/base64.h"
@@ -24,9 +22,7 @@
 #include "utils/string.h"
 #include "utils/string_hash.h"
 #include "utils/system.h"
-#include "utils/system.h"
 #include "utils/urlencode.h"
-#include "utils/yamlcpp_extra.h"
 #include "interfaces.h"
 #include "multithread.h"
 #include "settings.h"
@@ -65,6 +61,7 @@ const std::vector<UAProfile> UAMatchList = {
     {"ClashForAndroid","","","clash",false},
     {"ClashforWindows","\\/([0-9.]+)","0.11","clash",true},
     {"ClashforWindows","","","clash",false},
+    {"clash-verge","","","clash",true},
     {"ClashX Pro","","","clash",true},
     {"ClashX","\\/([0-9.]+)","0.13","clash",true},
     {"Clash","","","clash",true},
@@ -227,7 +224,7 @@ std::string getRuleset(RESPONSE_CALLBACK_ARGS)
             output_content += "  - '";
             if(strLine[posb - 2] == 'X')
                 output_content += "+.";
-            output_content += strLine.substr(posb, pose);
+            output_content += trim(strLine.substr(posb, pose));
             output_content += "'\n";
             continue;
         case 4:
@@ -236,7 +233,7 @@ std::string getRuleset(RESPONSE_CALLBACK_ARGS)
             if(filterLine())
                 continue;
             output_content += "  - '";
-            output_content += strLine.substr(posb, pose);
+            output_content += trim(strLine.substr(posb, pose));
             output_content += "'\n";
             continue;
         case 5:
@@ -246,7 +243,7 @@ std::string getRuleset(RESPONSE_CALLBACK_ARGS)
                 continue;
             if(strLine[posb - 2] == 'X')
                 output_content += '.';
-            output_content += strLine.substr(posb, pose);
+            output_content += trim(strLine.substr(posb, pose));
             output_content += '\n';
             continue;
         case 6:
@@ -414,6 +411,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS)
         argExpandRulesets.define(true);
 
     ext.clash_proxies_style = global.clashProxiesStyle;
+    ext.clash_proxy_groups_style = global.clashProxyGroupsStyle;
 
     /// read preference from argument, assign global var if not in argument
     ext.tfo.define(argTFO).define(global.TFOFlag);
@@ -533,10 +531,58 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS)
         ext.rename_array = safe_get_renames();
 
     /// check custom include/exclude settings
-    if(!argIncludeRemark.empty() && regValid(argIncludeRemark))
-        lIncludeRemarks = string_array{argIncludeRemark};
-    if(!argExcludeRemark.empty() && regValid(argExcludeRemark))
-        lExcludeRemarks = string_array{argExcludeRemark};
+    if (!argIncludeRemark.empty())
+    {
+        // Check if the delimiter ` is present
+        if (argIncludeRemark.find('`') != std::string::npos) 
+        {
+            // Split argIncludeRemark using ` as the delimiter
+            string_array splitIncludeRemarks = split(argIncludeRemark, "`");
+            // Filter out invalid regular expressions
+            string_array tempValidRemarks;
+            for (const auto& remark : splitIncludeRemarks)
+             {
+                if (!remark.empty() && regValid(remark)) // Validate each split element using regValid
+                { 
+                    tempValidRemarks.push_back(remark);
+                }
+            }
+            if (!tempValidRemarks.empty())
+                lIncludeRemarks = tempValidRemarks;
+        }
+        else
+        {
+            // If no delimiter is found, follow the original logic
+            if (regValid(argIncludeRemark))
+                lIncludeRemarks = string_array{argIncludeRemark};
+        }
+    }
+    if (!argExcludeRemark.empty())
+    {
+        // Check if the delimiter ` is present
+        if (argExcludeRemark.find('`') != std::string::npos)
+        {
+            // Split argExcludeRemark using ` as the delimiter
+            string_array splitExcludeRemarks = split(argExcludeRemark, "`");
+            // Filter out invalid regular expressions
+            string_array tempValidRemarks;
+            for (const auto& remark : splitExcludeRemarks)
+            {
+                if (!remark.empty() && regValid(remark)) // Validate each split element using regValid
+                { 
+                    tempValidRemarks.push_back(remark);
+                }
+            }
+            if (!tempValidRemarks.empty())
+                lExcludeRemarks = tempValidRemarks;
+        }
+        else
+        {
+            // If no delimiter is found, follow the original logic
+            if (regValid(argExcludeRemark))
+                lExcludeRemarks = string_array{argExcludeRemark};
+        }
+    }
 
     /// initialize script runtime
     if(authorized && !global.scriptCleanContext)
@@ -571,6 +617,8 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS)
     {
         groupID = -1;
         urls = split(global.insertUrls, "|");
+        // Remove empty urls
+        urls.erase(std::remove_if(urls.begin(), urls.end(), [](const std::string& str) { return str.empty(); }), urls.end());
         importItems(urls, true);
         for(std::string &x : urls)
         {
@@ -590,6 +638,8 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS)
         }
     }
     urls = split(argUrl, "|");
+    // Remove empty urls
+    urls.erase(std::remove_if(urls.begin(), urls.end(), [](const std::string& str) { return str.empty(); }), urls.end());
     importItems(urls, true);
     groupID = 0;
     for(std::string &x : urls)
@@ -929,7 +979,7 @@ std::string simpleToClashR(RESPONSE_CALLBACK_ARGS)
         return "Please insert your subscription link instead of clicking the default link.";
     }
     request.argument.emplace("target", "clashr");
-    request.argument.emplace("url", urlEncode(url));
+    request.argument.emplace("url", url);
     return subconverter(request, response);
 }
 
@@ -1072,6 +1122,7 @@ std::string surgeConfToClash(RESPONSE_CALLBACK_ARGS)
     ext.skip_cert_verify = global.skipCertVerify;
     ext.tls13 = global.TLS13Flag;
     ext.clash_proxies_style = global.clashProxiesStyle;
+    ext.clash_proxy_groups_style = global.clashProxyGroupsStyle;
 
     ProxyGroupConfigs dummy_groups;
     proxyToClash(nodes, clash, dummy_groups, false, ext);
@@ -1155,6 +1206,34 @@ std::string surgeConfToClash(RESPONSE_CALLBACK_ARGS)
     return YAML::Dump(clash);
 }
 
+// Merge multiple key-values based on delimiters
+static void merge_values(const string_multimap& source, 
+                 const std::string& key,
+                 std::string& merged,
+                 char delimiter)
+{
+    auto range = source.equal_range(key);
+    for (auto iter = range.first; iter != range.second; ++iter)
+    {
+        if (!iter->second.empty())
+        {
+            if (!merged.empty()) merged += delimiter;
+            merged += iter->second;
+        }
+    }
+}
+
+// Update container
+static void update_container(string_multimap& container, 
+                     const std::string& key,
+                     const std::string& merged)
+{
+    if (!merged.empty()) {
+        container.erase(key);
+        container.emplace(key, merged);
+    }
+}
+
 std::string getProfile(RESPONSE_CALLBACK_ARGS)
 {
     auto &argument = request.argument;
@@ -1222,14 +1301,13 @@ std::string getProfile(RESPONSE_CALLBACK_ARGS)
             return "Forbidden";
         }
     }
-    /// check if more than one profile is provided
+    
+    // Handle url
+    std::string all_urls;
+    merge_values(contents, "url", all_urls, '|');
     if(profiles.size() > 1)
     {
         writeLog(0, "Multiple profiles are provided. Trying to combine profiles...", LOG_TYPE_INFO);
-        std::string all_urls, url;
-        auto iter = contents.find("url");
-        if(iter != contents.end())
-            all_urls = iter->second;
         for(size_t i = 1; i < profiles.size(); i++)
         {
             name = profiles[i];
@@ -1243,10 +1321,12 @@ std::string getProfile(RESPONSE_CALLBACK_ARGS)
                 writeLog(0, "Ignoring broken profile '" + name + "'...", LOG_LEVEL_WARNING);
                 continue;
             }
-            url = ini.get("Profile", "url");
-            if(!url.empty())
+            string_multimap profile_items;
+            ini.get_items("Profile", profile_items); // Get all key-value pairs in the [Profile] section
+            size_t before_length = all_urls.length();
+            merge_values(profile_items, "url", all_urls, '|');
+            if (all_urls.length() > before_length) 
             {
-                all_urls += "|" + url;
                 writeLog(0, "Profile url from '" + name + "' added.", LOG_LEVEL_INFO);
             }
             else
@@ -1254,8 +1334,24 @@ std::string getProfile(RESPONSE_CALLBACK_ARGS)
                 writeLog(0, "Profile '" + name + "' does not have url key. Skipping...", LOG_LEVEL_INFO);
             }
         }
-        iter->second = all_urls;
-    }
+    } 
+    // Update the url key-value pairs in contents uniformly
+    update_container(contents, "url", all_urls);
+
+    // Handle rename
+    std::string all_renames;
+    merge_values(contents, "rename", all_renames, '`');
+    update_container(contents, "rename", all_renames);
+
+    // Handle exclude
+    std::string all_excludes;
+    merge_values(contents, "exclude", all_excludes, '`');
+    update_container(contents, "exclude", all_excludes);
+
+    // Handle include
+    std::string all_includes;
+    merge_values(contents, "include", all_includes, '`');
+    update_container(contents, "include", all_includes);
 
     contents.emplace("token", token);
     contents.emplace("profile_data", base64Encode(global.managedConfigPrefix + "/getprofile?" + joinArguments(argument)));
@@ -1363,10 +1459,10 @@ int simpleGenerator()
 
     string_multimap allItems;
     std::string proxy = parseProxy(global.proxySubscription);
-    Request request;
-    Response response;
     for(std::string &x : sections)
     {
+        Request request;
+        Response response;
         response.status_code = 200;
         //std::cerr<<"Generating artifact '"<<x<<"'...\n";
         writeLog(0, "Generating artifact '" + x + "'...", LOG_LEVEL_INFO);
@@ -1382,7 +1478,7 @@ int simpleGenerator()
         if(ini.item_exist("profile"))
         {
             profile = ini.get("profile");
-            request.argument.emplace("name", urlEncode(profile));
+            request.argument.emplace("name", profile);
             request.argument.emplace("token", global.accessToken);
             request.argument.emplace("expand", "true");
             content = getProfile(request, response);
